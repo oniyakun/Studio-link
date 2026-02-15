@@ -2,7 +2,6 @@
 const signalingInput = document.getElementById("signalingUrl");
 const micSelect = document.getElementById("micSelect");
 const camSelect = document.getElementById("camSelect");
-const enableVideoInput = document.getElementById("enableVideo");
 const hidePreviewInput = document.getElementById("hidePreview");
 const refreshBtn = document.getElementById("refreshDevices");
 const connectBtn = document.getElementById("connectBtn");
@@ -90,7 +89,6 @@ function saveSettings() {
     micId: micSelect.value || "",
     camId: camSelect.value || "",
     mode,
-    enableVideo: Boolean(enableVideoInput.checked),
     hidePreview: Boolean(hidePreviewInput?.checked),
   };
   try {
@@ -110,10 +108,6 @@ function applySavedSettings() {
   if (typeof settings.mode === "string") {
     const modeInput = mediaModeInputs.find((input) => input.value === settings.mode);
     if (modeInput) modeInput.checked = true;
-  }
-
-  if (typeof settings.enableVideo === "boolean") {
-    enableVideoInput.checked = settings.enableVideo;
   }
 
   if (hidePreviewInput && typeof settings.hidePreview === "boolean") {
@@ -356,7 +350,7 @@ async function createPeerConnection() {
   const micId = micSelect.value;
   const camId = camSelect.value;
   const mode = getSelectedMediaMode();
-  const sendVideo = mode.wantVideo && enableVideoInput.checked;
+  const sendVideo = mode.wantVideo;
   const constraints = {
     audio: mode.wantAudio
       ? {
@@ -411,7 +405,7 @@ async function createPeerConnection() {
 
   log(`tracks added audio=${localStream.getAudioTracks().length} video=${localStream.getVideoTracks().length}`);
   if (mode.wantVideo && sendVideo && localStream.getVideoTracks().length === 0) {
-    log("warning: Send Camera is enabled but no video track was acquired");
+    log("warning: video mode is enabled but no video track was acquired");
   }
   if (mode.wantAudio && localStream.getAudioTracks().length === 0) {
     log("warning: no audio track acquired");
@@ -523,7 +517,6 @@ function updateModeDependentUi() {
   const mode = getSelectedMediaMode();
   micSelect.disabled = !mode.wantAudio;
   camSelect.disabled = !mode.wantVideo;
-  enableVideoInput.disabled = !mode.wantVideo;
   saveSettings();
 }
 
@@ -546,7 +539,7 @@ connectBtn.addEventListener("click", async () => {
       await preloadMediaPermissionsAndDevices();
     }
     const mode = getSelectedMediaMode();
-    await ensureMediaPermission(mode.wantAudio, mode.wantVideo && enableVideoInput.checked);
+    await ensureMediaPermission(mode.wantAudio, mode.wantVideo);
     mediaPermissionReady = true;
     await listDevices();
     updateModeDependentUi();
@@ -579,10 +572,6 @@ for (const input of mediaModeInputs) {
 signalingInput.addEventListener("change", saveSettings);
 micSelect.addEventListener("change", saveSettings);
 camSelect.addEventListener("change", saveSettings);
-enableVideoInput.addEventListener("change", () => {
-  saveSettings();
-  updateModeDependentUi();
-});
 if (hidePreviewInput) {
   hidePreviewInput.addEventListener("change", () => {
     updatePreviewVisibility();

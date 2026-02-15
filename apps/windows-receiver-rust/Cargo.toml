@@ -1,6 +1,6 @@
 [package]
 name = "studio-link"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 
 [dependencies]
@@ -18,4 +18,5 @@ rtp = "0.11"
 webrtc-util = "0.9"
 virtualcam = "0.1.1"
 openh264 = "0.9.3"
+
 

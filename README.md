@@ -50,7 +50,6 @@ Edit this file and restart the app to change behavior.
 Open sender page on remote device:
 - URL: `https://<host-ip>:5173`
 - Signaling URL: `wss://<host-ip>:5173/ws`
-- Enable `Send Camera` to publish webcam track
 - Click `Connect and Send`
 
 Expected result:
@@ -89,4 +88,3 @@ The receiver now attempts direct virtual camera injection for H264 video tracks:
 - OBS Virtual Camera must be installed on Windows.
 
 If direct injection fails or codec is not H264, virtual camera output is skipped.
-
