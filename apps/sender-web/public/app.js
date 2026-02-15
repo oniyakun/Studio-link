@@ -3,10 +3,14 @@ const signalingInput = document.getElementById("signalingUrl");
 const micSelect = document.getElementById("micSelect");
 const camSelect = document.getElementById("camSelect");
 const enableVideoInput = document.getElementById("enableVideo");
+const hidePreviewInput = document.getElementById("hidePreview");
 const refreshBtn = document.getElementById("refreshDevices");
 const connectBtn = document.getElementById("connectBtn");
 const disconnectBtn = document.getElementById("disconnectBtn");
 const localPreview = document.getElementById("localPreview");
+const previewShell = document.querySelector(".preview-shell");
+const connectionBadge = document.getElementById("connectionBadge");
+const connectionBadgeText = document.getElementById("connectionBadgeText");
 const mediaModeInputs = Array.from(document.querySelectorAll('input[name="mediaMode"]'));
 
 let ws;
@@ -20,6 +24,10 @@ let mediaPermissionReady = false;
 const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 const FORCE_H264 = true;
 const FIXED_ROOM_ID = "local-session";
+const SETTINGS_KEY = "sender_web_settings_v1";
+
+let preferredMicId = null;
+let preferredCamId = null;
 
 const defaultWsProtocol = location.protocol === "https:" ? "wss" : "ws";
 const defaultWsPort = location.protocol === "https:" ? 8788 : 8787;
@@ -30,6 +38,83 @@ if (!signalingInput.value || signalingInput.value.includes("localhost")) {
 function log(line) {
   const now = new Date().toLocaleTimeString();
   statusEl.textContent = `[${now}] ${line}\n` + statusEl.textContent;
+}
+
+function setConnectionBadge(state, text) {
+  if (!connectionBadge || !connectionBadgeText) return;
+  connectionBadge.dataset.state = state;
+  connectionBadgeText.textContent = text;
+}
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveSettings() {
+  const mode = getSelectedMediaMode().mode;
+  const settings = {
+    signalingUrl: signalingInput.value.trim(),
+    micId: micSelect.value || "",
+    camId: camSelect.value || "",
+    mode,
+    enableVideo: Boolean(enableVideoInput.checked),
+    hidePreview: Boolean(hidePreviewInput?.checked),
+  };
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // ignore quota/storage errors
+  }
+}
+
+function applySavedSettings() {
+  const settings = loadSettings();
+
+  if (typeof settings.signalingUrl === "string" && settings.signalingUrl.trim()) {
+    signalingInput.value = settings.signalingUrl.trim();
+  }
+
+  if (typeof settings.mode === "string") {
+    const modeInput = mediaModeInputs.find((input) => input.value === settings.mode);
+    if (modeInput) modeInput.checked = true;
+  }
+
+  if (typeof settings.enableVideo === "boolean") {
+    enableVideoInput.checked = settings.enableVideo;
+  }
+
+  if (hidePreviewInput && typeof settings.hidePreview === "boolean") {
+    hidePreviewInput.checked = settings.hidePreview;
+  }
+
+  if (typeof settings.micId === "string" && settings.micId) {
+    preferredMicId = settings.micId;
+  }
+  if (typeof settings.camId === "string" && settings.camId) {
+    preferredCamId = settings.camId;
+  }
+}
+
+function restoreSelectValue(selectEl, preferred) {
+  if (!preferred) return false;
+  const hit = Array.from(selectEl.options).some((o) => o.value === preferred);
+  if (hit) {
+    selectEl.value = preferred;
+    return true;
+  }
+  return false;
+}
+
+function updatePreviewVisibility() {
+  if (!previewShell || !hidePreviewInput) return;
+  previewShell.classList.toggle("preview-hidden", hidePreviewInput.checked);
 }
 
 function getSelectedMediaMode() {
@@ -72,6 +157,8 @@ async function listDevices() {
     log("enumerateDevices unavailable");
     return;
   }
+  const currentMic = micSelect.value;
+  const currentCam = camSelect.value;
   const devices = await navigator.mediaDevices.enumerateDevices();
   const mics = devices.filter((d) => d.kind === "audioinput");
   const cams = devices.filter((d) => d.kind === "videoinput");
@@ -83,6 +170,13 @@ async function listDevices() {
   camSelect.innerHTML = cams
     .map((d, i) => `<option value="${d.deviceId}">${d.label || `Camera ${i + 1}`}</option>`)
     .join("");
+
+  const micRestored = restoreSelectValue(micSelect, preferredMicId) || restoreSelectValue(micSelect, currentMic);
+  const camRestored = restoreSelectValue(camSelect, preferredCamId) || restoreSelectValue(camSelect, currentCam);
+  if (!micRestored) preferredMicId = null;
+  if (!camRestored) preferredCamId = null;
+
+  saveSettings();
 }
 
 async function ensureMediaPermission(wantAudio, wantVideo) {
@@ -121,15 +215,25 @@ function setupWebSocket() {
 
     ws.addEventListener("open", () => {
       log("signaling connected");
+      setConnectionBadge("connecting", "SIGNALING UP");
       ws.send(JSON.stringify({ type: "join", roomId: FIXED_ROOM_ID, role: "sender" }));
       resolve();
     });
 
-    ws.addEventListener("error", (e) => reject(e));
+    ws.addEventListener("error", (e) => {
+      setConnectionBadge("error", "SIGNAL ERROR");
+      reject(e);
+    });
+
+    ws.addEventListener("close", () => {
+      if (pc && pc.connectionState === "connected") return;
+      setConnectionBadge("idle", "DISCONNECTED");
+    });
 
     ws.addEventListener("message", async (event) => {
       const msg = JSON.parse(event.data);
       if (msg.type === "peer-ready") {
+        setConnectionBadge("connecting", "NEGOTIATING");
         await createOffer(false);
       } else if (msg.type === "answer") {
         await pc.setRemoteDescription(msg.data);
@@ -152,8 +256,10 @@ function setupWebSocket() {
         await pc.addIceCandidate(msg.data);
       } else if (msg.type === "peer-left") {
         log("peer disconnected");
+        setConnectionBadge("warning", "PEER LEFT");
       } else if (msg.type === "error") {
         log(`server error: ${msg.reason}`);
+        setConnectionBadge("error", "SERVER ERROR");
       }
     });
   });
@@ -164,6 +270,17 @@ async function createPeerConnection() {
 
   pc.onconnectionstatechange = () => {
     log(`pc state: ${pc.connectionState}`);
+    if (pc.connectionState === "connected") {
+      setConnectionBadge("streaming", "LIVE");
+    } else if (pc.connectionState === "connecting") {
+      setConnectionBadge("connecting", "CONNECTING");
+    } else if (pc.connectionState === "disconnected") {
+      setConnectionBadge("warning", "INTERRUPTED");
+    } else if (pc.connectionState === "failed") {
+      setConnectionBadge("error", "CONNECTION FAIL");
+    } else if (pc.connectionState === "closed") {
+      setConnectionBadge("idle", "DISCONNECTED");
+    }
     if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
       maybeRestartIce();
     }
@@ -344,6 +461,7 @@ function cleanup() {
   ws = null;
   connectBtn.disabled = false;
   disconnectBtn.disabled = true;
+  setConnectionBadge("idle", "DISCONNECTED");
 }
 
 function updateModeDependentUi() {
@@ -351,6 +469,7 @@ function updateModeDependentUi() {
   micSelect.disabled = !mode.wantAudio;
   camSelect.disabled = !mode.wantVideo;
   enableVideoInput.disabled = !mode.wantVideo;
+  saveSettings();
 }
 
 refreshBtn.addEventListener("click", async () => {
@@ -367,6 +486,7 @@ refreshBtn.addEventListener("click", async () => {
 connectBtn.addEventListener("click", async () => {
   cleanup();
   try {
+    setConnectionBadge("connecting", "CONNECTING");
     if (!mediaPermissionReady) {
       await preloadMediaPermissionsAndDevices();
     }
@@ -391,19 +511,41 @@ connectBtn.addEventListener("click", async () => {
 disconnectBtn.addEventListener("click", () => {
   cleanup();
   log("disconnected by user");
+  setConnectionBadge("idle", "DISCONNECTED");
 });
 
 for (const input of mediaModeInputs) {
-  input.addEventListener("change", updateModeDependentUi);
+  input.addEventListener("change", () => {
+    updateModeDependentUi();
+    saveSettings();
+  });
+}
+
+signalingInput.addEventListener("change", saveSettings);
+micSelect.addEventListener("change", saveSettings);
+camSelect.addEventListener("change", saveSettings);
+enableVideoInput.addEventListener("change", () => {
+  saveSettings();
+  updateModeDependentUi();
+});
+if (hidePreviewInput) {
+  hidePreviewInput.addEventListener("change", () => {
+    updatePreviewVisibility();
+    saveSettings();
+  });
 }
 
 (async () => {
+  applySavedSettings();
+  updatePreviewVisibility();
   logEnvironmentDiagnostics();
   await preloadMediaPermissionsAndDevices();
   if (!mediaPermissionReady) {
     await listDevices();
   }
   updateModeDependentUi();
+  saveSettings();
   disconnectBtn.disabled = true;
+  setConnectionBadge("idle", "READY");
   log("ready (permissions requested before connect)");
 })();

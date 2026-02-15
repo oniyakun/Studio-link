@@ -1,65 +1,96 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Web RTC Mic Sender</title>
+    <title>Aether Link Sender</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="container">
-      <section class="panel">
-        <h1>Sender</h1>
-        <p>Send your microphone to the Windows host receiver.</p>
+    <main class="stage">
+      <section class="monolith">
+        <div class="monolith-inner">
+          <aside class="sidebar">
+            <div class="brand">
+              <span class="dot"></span>
+              Aether Link
+            </div>
 
-        <div class="row">
-          <label>
-            Signaling URL
-            <input id="signalingUrl" value="ws://localhost:8787" />
-          </label>
+            <div class="control-stack">
+              <label class="field">
+                <span>Signaling URL</span>
+                <input id="signalingUrl" value="ws://localhost:8787" />
+              </label>
+
+              <label class="field">
+                <span>Microphone</span>
+                <select id="micSelect"></select>
+              </label>
+
+              <label class="field">
+                <span>Camera</span>
+                <select id="camSelect"></select>
+              </label>
+
+              <fieldset class="mode-group">
+                <legend>Transfer Mode</legend>
+                <label class="inline-option">
+                  <input type="radio" name="mediaMode" value="av" checked />
+                  <span>Audio + Video</span>
+                </label>
+                <label class="inline-option">
+                  <input type="radio" name="mediaMode" value="audio" />
+                  <span>Audio Only</span>
+                </label>
+                <label class="inline-option">
+                  <input type="radio" name="mediaMode" value="video" />
+                  <span>Video Only</span>
+                </label>
+              </fieldset>
+
+              <label class="toggle-row" for="enableVideo">
+                <span>Send Camera</span>
+                <input id="enableVideo" type="checkbox" checked />
+              </label>
+              <label class="toggle-row" for="hidePreview">
+                <span>Hide Local Preview</span>
+                <input id="hidePreview" type="checkbox" />
+              </label>
+            </div>
+
+            <div class="button-grid">
+              <button id="refreshDevices" class="secondary">Refresh Devices</button>
+              <button id="connectBtn">Connect and Send</button>
+              <button id="disconnectBtn" class="danger">Disconnect</button>
+            </div>
+          </aside>
+
+          <section class="viewport">
+            <header class="viewport-header">
+              <div>
+                <h1>Studio Link</h1>
+                <p>Low-latency sender node</p>
+              </div>
+              <div class="status-badge" id="connectionBadge" data-state="idle">
+                <span class="pulse"></span>
+                <span id="connectionBadgeText">READY</span>
+              </div>
+            </header>
+
+            <div class="preview-shell">
+              <video id="localPreview" autoplay playsinline muted></video>
+              <div class="preview-overlay"></div>
+            </div>
+
+            <div class="status" id="status"></div>
+          </section>
         </div>
-
-        <div class="row">
-          <label>
-            Microphone
-            <select id="micSelect"></select>
-          </label>
-          <label>
-            Camera
-            <select id="camSelect"></select>
-          </label>
-        </div>
-
-        <div class="row one-col">
-          <fieldset class="mode-group">
-            <legend>Transfer Mode</legend>
-            <label class="inline-option">
-              <input type="radio" name="mediaMode" value="av" checked />
-              <span>Audio + Video</span>
-            </label>
-            <label class="inline-option">
-              <input type="radio" name="mediaMode" value="audio" />
-              <span>Audio Only</span>
-            </label>
-            <label class="inline-option">
-              <input type="radio" name="mediaMode" value="video" />
-              <span>Video Only</span>
-            </label>
-          </fieldset>
-        </div>
-
-        <div class="row">
-          <label>
-            <span>Send Camera</span>
-            <input id="enableVideo" type="checkbox" checked />
-          </label>
-          <button id="refreshDevices" class="secondary">Refresh Devices</button>
-          <button id="connectBtn">Connect and Send</button>
-          <button id="disconnectBtn" class="danger">Disconnect</button>
-        </div>
-
-        <video id="localPreview" autoplay playsinline muted></video>
-        <div class="status" id="status"></div>
       </section>
     </main>
 
