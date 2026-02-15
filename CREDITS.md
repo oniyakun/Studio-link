@@ -32,11 +32,47 @@ Third-party libraries are used as package/crate dependencies.
 - License: BSD-3-Clause
 - Usage: In use as Rust crate dependency (`apps/windows-receiver-rust/Cargo.toml`)
 
+### webrtc-rs/webrtc-media
+- URL: https://github.com/webrtc-rs/webrtc/tree/master/media
+- Purpose: RTP media writers used for video track persistence (`IVFWriter` / `H264Writer`)
+- License: MIT OR Apache-2.0
+- Usage: In use as Rust crate dependency (`apps/windows-receiver-rust/Cargo.toml`)
+
+### NeuroDonu/virtualcam
+- URL: https://github.com/NeuroDonu/virtualcam
+- Purpose: Send decoded frames directly to OBS Virtual Camera backend on Windows
+- License: Apache-2.0
+- Usage: In use as Rust crate dependency (`apps/windows-receiver-rust/Cargo.toml`)
+
+### ralfbiedert/openh264-rs
+- URL: https://github.com/ralfbiedert/openh264-rs
+- Purpose: Decode H264 stream to raw frame planes for virtual camera injection
+- License: BSD-2-Clause
+- Usage: In use as Rust crate dependency (`apps/windows-receiver-rust/Cargo.toml`)
+
+### webrtc-rs/rtp
+- URL: https://github.com/webrtc-rs/rtp
+- Purpose: RTP packet model used for video relay forwarding
+- License: MIT OR Apache-2.0
+- Usage: In use as Rust crate dependency (`apps/windows-receiver-rust/Cargo.toml`)
+
+### webrtc-rs/webrtc-util
+- URL: https://github.com/webrtc-rs/webrtc/tree/master/util
+- Purpose: Marshal helpers used for RTP packet serialization
+- License: MIT OR Apache-2.0
+- Usage: In use as Rust crate dependency (`apps/windows-receiver-rust/Cargo.toml`)
+
 ### websockets/ws
 - URL: https://github.com/websockets/ws
 - Purpose: Node.js signaling server WebSocket transport
 - License: MIT
 - Usage: In use as npm dependency (`apps/signaling-server/package.json`)
+
+### jfromaniello/selfsigned
+- URL: https://github.com/jfromaniello/selfsigned
+- Purpose: Development certificate generation helper
+- License: MIT
+- Usage: In use as npm dev dependency (`package.json`)
 
 ### webrtc/samples
 - URL: https://github.com/webrtc/samples

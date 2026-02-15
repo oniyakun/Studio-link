@@ -17,10 +17,6 @@
             Signaling URL
             <input id="signalingUrl" value="ws://localhost:8787" />
           </label>
-          <label>
-            Room ID
-            <input id="roomId" value="demo-room" />
-          </label>
         </div>
 
         <div class="row">
@@ -29,16 +25,40 @@
             <select id="micSelect"></select>
           </label>
           <label>
-            Camera (reserved for phase 2)
-            <select id="camSelect" disabled></select>
+            Camera
+            <select id="camSelect"></select>
           </label>
         </div>
 
-        <div class="row">
-          <button id="refreshDevices" class="secondary">Refresh Devices</button>
-          <button id="connectBtn">Connect and Send</button>
+        <div class="row one-col">
+          <fieldset class="mode-group">
+            <legend>Transfer Mode</legend>
+            <label class="inline-option">
+              <input type="radio" name="mediaMode" value="av" checked />
+              <span>Audio + Video</span>
+            </label>
+            <label class="inline-option">
+              <input type="radio" name="mediaMode" value="audio" />
+              <span>Audio Only</span>
+            </label>
+            <label class="inline-option">
+              <input type="radio" name="mediaMode" value="video" />
+              <span>Video Only</span>
+            </label>
+          </fieldset>
         </div>
 
+        <div class="row">
+          <label>
+            <span>Send Camera</span>
+            <input id="enableVideo" type="checkbox" checked />
+          </label>
+          <button id="refreshDevices" class="secondary">Refresh Devices</button>
+          <button id="connectBtn">Connect and Send</button>
+          <button id="disconnectBtn" class="danger">Disconnect</button>
+        </div>
+
+        <video id="localPreview" autoplay playsinline muted></video>
         <div class="status" id="status"></div>
       </section>
     </main>

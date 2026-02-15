@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "web-rtc-mic",
   "private": true,
   "scripts": {
@@ -8,5 +8,8 @@
   "workspaces": [
     "apps/signaling-server",
     "apps/sender-web"
-  ]
+  ],
+  "devDependencies": {
+    "selfsigned": "^5.5.0"
+  }
 }
