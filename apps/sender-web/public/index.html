@@ -1,0 +1,48 @@
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Web RTC Mic Sender</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <section class="panel">
+        <h1>Sender</h1>
+        <p>Send your microphone to the Windows host receiver.</p>
+
+        <div class="row">
+          <label>
+            Signaling URL
+            <input id="signalingUrl" value="ws://localhost:8787" />
+          </label>
+          <label>
+            Room ID
+            <input id="roomId" value="demo-room" />
+          </label>
+        </div>
+
+        <div class="row">
+          <label>
+            Microphone
+            <select id="micSelect"></select>
+          </label>
+          <label>
+            Camera (reserved for phase 2)
+            <select id="camSelect" disabled></select>
+          </label>
+        </div>
+
+        <div class="row">
+          <button id="refreshDevices" class="secondary">Refresh Devices</button>
+          <button id="connectBtn">Connect and Send</button>
+        </div>
+
+        <div class="status" id="status"></div>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

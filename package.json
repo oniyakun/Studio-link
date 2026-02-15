@@ -1,0 +1,12 @@
+﻿{
+  "name": "web-rtc-mic",
+  "private": true,
+  "scripts": {
+    "start:signaling": "npm --workspace apps/signaling-server start",
+    "start:sender-web": "npm --workspace apps/sender-web start"
+  },
+  "workspaces": [
+    "apps/signaling-server",
+    "apps/sender-web"
+  ]
+}
