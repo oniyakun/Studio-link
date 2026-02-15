@@ -1,0 +1,81 @@
+name: Release Studio Link
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Read version from Cargo.toml
+        id: version
+        shell: pwsh
+        run: |
+          $cargoToml = Get-Content "apps/windows-receiver-rust/Cargo.toml" -Raw
+          if ($cargoToml -match 'version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"') {
+            $v = $Matches[1]
+            "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          } else {
+            throw "Could not parse version from Cargo.toml"
+          }
+
+      - name: Build release binary
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path apps/windows-receiver-rust/Cargo.toml
+
+      - name: Package executable
+        id: package
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $dist = "dist"
+          New-Item -ItemType Directory -Force $dist | Out-Null
+          Copy-Item "apps/windows-receiver-rust/target/release/studio-link.exe" "$dist/Studio Link.exe" -Force
+          $zipName = "Studio-Link-v$version-windows-x64.zip"
+          if (Test-Path $zipName) { Remove-Item $zipName -Force }
+          Compress-Archive -Path "$dist/*" -DestinationPath $zipName -Force
+          "zip_name=$zipName" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Studio-Link-${{ steps.version.outputs.version }}-windows-x64
+          path: ${{ steps.package.outputs.zip_name }}
+
+      - name: Create or update GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v${{ steps.version.outputs.version }}
+          name: Studio Link v${{ steps.version.outputs.version }}
+          allowUpdates: true
+          removeArtifacts: true
+          replacesArtifacts: true
+          artifacts: ${{ steps.package.outputs.zip_name }}
+          body: |
+            ## Studio Link v${{ steps.version.outputs.version }}
+
+            Windows build of Studio Link.
+
+            ### Included
+            - `Studio Link.exe` (all-in-one executable)
+
+            ### Usage
+            1. Download and unzip `Studio-Link-v${{ steps.version.outputs.version }}-windows-x64.zip`
+            2. Run `Studio Link.exe`
+            3. Open the web UI shown in startup logs (usually `https://<host-ip>:5173`)
+
+            `config.json` is auto-generated on first run in the executable directory.
