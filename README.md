@@ -15,11 +15,12 @@ Phase 1 in progress.
 Implemented:
 - WebSocket signaling server (`apps/signaling-server`)
 - Browser sender page for microphone capture and WebRTC publish (`apps/sender-web`)
-- Rust Windows receiver (host role) that negotiates WebRTC and logs inbound RTP packet rate (`apps/windows-receiver-rust`)
+- Rust Windows receiver (host role) that negotiates WebRTC
+- Receiver audio path: RTP(Opus) -> PCM -> output device (WASAPI via `cpal`)
 
 Not implemented yet:
-- Writing received audio into virtual microphone device (WASAPI output)
 - Camera passthrough
+- Sender admission/auth and reconnect hardening
 
 ## Quick start (audio signaling + receive)
 
@@ -61,7 +62,9 @@ Open sender page on remote device:
 
 Expected result:
 - Receiver terminal prints `track received` and per-second RTP packet counts.
+- If output device is your virtual mic playback endpoint, other apps can capture this audio via the corresponding virtual microphone input.
 
 ## Environment variables (receiver)
 - `SIGNALING_URL` (default `ws://127.0.0.1:8787`)
 - `ROOM_ID` (default `demo-room`)
+- `VIRTUAL_MIC_OUTPUT_NAME` (optional output device name substring; if omitted, uses default output device)

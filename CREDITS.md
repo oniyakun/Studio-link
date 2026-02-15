@@ -20,6 +20,18 @@ Third-party libraries are used as package/crate dependencies.
 - License: MIT OR Apache-2.0
 - Usage: In use as Rust crate dependency (`apps/windows-receiver-rust/Cargo.toml`)
 
+### RustAudio/cpal
+- URL: https://github.com/RustAudio/cpal
+- Purpose: Cross-platform audio output abstraction (WASAPI backend on Windows)
+- License: Apache-2.0
+- Usage: In use as Rust crate dependency (`apps/windows-receiver-rust/Cargo.toml`)
+
+### SpaceManiac/opus-rs
+- URL: https://github.com/SpaceManiac/opus-rs
+- Purpose: Opus decoder bindings for RTP payload decode in receiver
+- License: BSD-3-Clause
+- Usage: In use as Rust crate dependency (`apps/windows-receiver-rust/Cargo.toml`)
+
 ### websockets/ws
 - URL: https://github.com/websockets/ws
 - Purpose: Node.js signaling server WebSocket transport
