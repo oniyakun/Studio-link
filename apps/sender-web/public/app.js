@@ -30,9 +30,35 @@ let preferredMicId = null;
 let preferredCamId = null;
 
 const defaultWsProtocol = location.protocol === "https:" ? "wss" : "ws";
-const defaultWsPort = location.protocol === "https:" ? 8788 : 8787;
+const defaultWsUrl = `${defaultWsProtocol}://${location.host}/ws`;
 if (!signalingInput.value || signalingInput.value.includes("localhost")) {
-  signalingInput.value = `${defaultWsProtocol}://${location.hostname}:${defaultWsPort}`;
+  signalingInput.value = defaultWsUrl;
+}
+
+function normalizeSignalingUrl(raw) {
+  let input = (raw || "").trim();
+  if (!input) return defaultWsUrl;
+
+  try {
+    const parsed = new URL(input);
+    // Auto-migrate legacy standalone signaling endpoints.
+    if ((parsed.protocol === "wss:" || parsed.protocol === "ws:") && parsed.port === "8788") {
+      return defaultWsUrl;
+    }
+    if ((parsed.protocol === "wss:" || parsed.protocol === "ws:") && parsed.port === "8787") {
+      return location.protocol === "https:" ? defaultWsUrl : `${parsed.protocol}//${location.host}/ws`;
+    }
+    if (location.protocol === "https:" && parsed.protocol === "ws:") {
+      parsed.protocol = "wss:";
+      if (parsed.pathname === "/" || !parsed.pathname) {
+        parsed.pathname = "/ws";
+      }
+      return parsed.toString();
+    }
+    return parsed.toString();
+  } catch {
+    return defaultWsUrl;
+  }
 }
 
 function log(line) {
@@ -211,22 +237,46 @@ async function preloadMediaPermissionsAndDevices() {
 
 function setupWebSocket() {
   return new Promise((resolve, reject) => {
-    ws = new WebSocket(signalingInput.value.trim());
+    const signalingUrl = normalizeSignalingUrl(signalingInput.value);
+    signalingInput.value = signalingUrl;
+    saveSettings();
+    ws = new WebSocket(signalingUrl);
+    let opened = false;
+    let settled = false;
+
+    const fail = (reason) => {
+      if (settled) return;
+      settled = true;
+      setConnectionBadge("error", "SIGNAL ERROR");
+      reject(new Error(reason));
+    };
 
     ws.addEventListener("open", () => {
+      opened = true;
+      if (settled) return;
+      settled = true;
       log("signaling connected");
       setConnectionBadge("connecting", "SIGNALING UP");
       ws.send(JSON.stringify({ type: "join", roomId: FIXED_ROOM_ID, role: "sender" }));
       resolve();
     });
 
-    ws.addEventListener("error", (e) => {
-      setConnectionBadge("error", "SIGNAL ERROR");
-      reject(e);
+    ws.addEventListener("error", () => {
+      const hint = location.protocol === "https:" && signalingUrl.startsWith("ws://")
+        ? "blocked mixed-content ws:// under https page"
+        : "handshake/network/cert issue";
+      fail(`websocket error url=${signalingUrl} hint=${hint}`);
     });
 
-    ws.addEventListener("close", () => {
+    ws.addEventListener("close", (ev) => {
+      if (!opened) {
+        fail(
+          `websocket closed before open url=${signalingUrl} code=${ev.code} reason=${ev.reason || "none"}`
+        );
+        return;
+      }
       if (pc && pc.connectionState === "connected") return;
+      log(`signaling closed code=${ev.code} reason=${ev.reason || "none"}`);
       setConnectionBadge("idle", "DISCONNECTED");
     });
 
@@ -262,6 +312,11 @@ function setupWebSocket() {
         setConnectionBadge("error", "SERVER ERROR");
       }
     });
+
+    setTimeout(() => {
+      if (opened || settled) return;
+      fail(`websocket open timeout url=${signalingUrl}`);
+    }, 8000);
   });
 }
 

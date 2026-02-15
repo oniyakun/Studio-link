@@ -10,12 +10,17 @@ use rtp::packetizer::Depacketizer;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::VecDeque;
+use std::fs;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc as std_mpsc};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use virtualcam::{Camera as VirtualCamera, PixelFormat as VirtualPixelFormat};
+use warp::Filter;
+use warp::ws::{Message as WsMessage, WebSocket};
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
@@ -36,6 +41,13 @@ const MAX_OPUS_SAMPLES_PER_PACKET: usize = 5_760;
 const MAX_BUFFER_SECONDS: usize = 5;
 const VIDEO_DEFAULT_FPS: u32 = 30;
 const FIXED_ROOM_ID: &str = "local-session";
+const EMBEDDED_CERT: &[u8] = include_bytes!("../../../certs/dev-cert.pem");
+const EMBEDDED_KEY: &[u8] = include_bytes!("../../../certs/dev-key.pem");
+const EMBEDDED_INDEX_HTML: &str = include_str!("../../sender-web/public/index.html");
+const EMBEDDED_APP_JS: &str = include_str!("../../sender-web/public/app.js");
+const EMBEDDED_STYLES_CSS: &str = include_str!("../../sender-web/public/styles.css");
+const EMBEDDED_WEB_PORT: u16 = 5173;
+const EMBEDDED_SIGNALING_PORT: u16 = 8787;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct SignalMessage {
@@ -62,6 +74,50 @@ struct AudioSink {
 struct VideoRelayConfig {
     enable_virtual_cam: bool,
     virtual_cam_backend: String,
+    virtual_cam_width: Option<usize>,
+    virtual_cam_height: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AppConfig {
+    signaling_url: String,
+    embedded_services: bool,
+    virtual_mic_output_name: Option<String>,
+    virtual_cam_enabled: bool,
+    virtual_cam_backend: String,
+    virtual_cam_width: Option<usize>,
+    virtual_cam_height: Option<usize>,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            signaling_url: "ws://127.0.0.1:8787".to_string(),
+            embedded_services: true,
+            virtual_mic_output_name: None,
+            virtual_cam_enabled: true,
+            virtual_cam_backend: "obs".to_string(),
+            virtual_cam_width: None,
+            virtual_cam_height: None,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct PeerHandle {
+    id: u64,
+    tx: mpsc::UnboundedSender<WsMessage>,
+}
+
+#[derive(Default)]
+struct SignalingRoom {
+    host: Option<PeerHandle>,
+    sender: Option<PeerHandle>,
+}
+
+#[derive(Default)]
+struct SignalingState {
+    room: SignalingRoom,
 }
 
 impl AudioSink {
@@ -149,19 +205,288 @@ fn start_audio_output(device_name_filter: Option<&str>) -> Result<(Arc<AudioSink
     Ok((sink, stream))
 }
 
+async fn start_embedded_services_if_enabled(enabled: bool) -> Result<()> {
+    if !enabled {
+        return Ok(());
+    }
+
+    let state = Arc::new(Mutex::new(SignalingState::default()));
+    let next_client_id = Arc::new(AtomicU64::new(1));
+
+    let ws_plain_state = state.clone();
+    let ws_plain_ids = next_client_id.clone();
+    tokio::spawn(async move {
+        let route = warp::path::end()
+            .and(warp::ws())
+            .and(with_signaling_state(ws_plain_state))
+            .and(with_next_client_id(ws_plain_ids))
+            .map(|ws: warp::ws::Ws, state, next_id| {
+                ws.on_upgrade(move |socket| handle_signaling_socket(socket, state, next_id))
+            });
+        warp::serve(route).run(([0, 0, 0, 0], EMBEDDED_SIGNALING_PORT)).await;
+    });
+
+    let (cert_path, key_path) = write_embedded_certs_to_temp()?;
+    let ws_secure_state = state.clone();
+    let ws_secure_ids = next_client_id.clone();
+    tokio::spawn(async move {
+        let html = warp::path::end().map(|| warp::reply::html(EMBEDDED_INDEX_HTML));
+        let app_js = warp::path("app.js")
+            .map(|| warp::reply::with_header(EMBEDDED_APP_JS, "content-type", "application/javascript; charset=utf-8"));
+        let styles = warp::path("styles.css")
+            .map(|| warp::reply::with_header(EMBEDDED_STYLES_CSS, "content-type", "text/css; charset=utf-8"));
+        let ws_secure = warp::path("ws")
+            .and(warp::ws())
+            .and(with_signaling_state(ws_secure_state))
+            .and(with_next_client_id(ws_secure_ids))
+            .map(|ws: warp::ws::Ws, state, next_id| {
+                ws.on_upgrade(move |socket| handle_signaling_socket(socket, state, next_id))
+            });
+        let routes = html.or(app_js).or(styles).or(ws_secure);
+
+        warp::serve(routes)
+            .tls()
+            .cert_path(cert_path)
+            .key_path(key_path)
+            .run(([0, 0, 0, 0], EMBEDDED_WEB_PORT))
+            .await;
+    });
+
+    println!("[embedded] https://0.0.0.0:{EMBEDDED_WEB_PORT}");
+    println!("[embedded] ws://0.0.0.0:{EMBEDDED_SIGNALING_PORT}");
+    Ok(())
+}
+
+fn with_signaling_state(
+    state: Arc<Mutex<SignalingState>>,
+) -> impl Filter<Extract = (Arc<Mutex<SignalingState>>,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || state.clone())
+}
+
+fn with_next_client_id(
+    next_id: Arc<AtomicU64>,
+) -> impl Filter<Extract = (Arc<AtomicU64>,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || next_id.clone())
+}
+
+fn write_embedded_certs_to_temp() -> Result<(PathBuf, PathBuf)> {
+    let dir = std::env::temp_dir().join("studio_link_embedded_tls");
+    fs::create_dir_all(&dir).context("failed to create embedded tls dir")?;
+    let cert_path = dir.join("dev-cert.pem");
+    let key_path = dir.join("dev-key.pem");
+    fs::write(&cert_path, EMBEDDED_CERT).context("failed to write embedded cert")?;
+    fs::write(&key_path, EMBEDDED_KEY).context("failed to write embedded key")?;
+    Ok((cert_path, key_path))
+}
+
+async fn handle_signaling_socket(
+    ws: WebSocket,
+    state: Arc<Mutex<SignalingState>>,
+    next_id: Arc<AtomicU64>,
+) {
+    let client_id = next_id.fetch_add(1, Ordering::Relaxed);
+    let (mut ws_tx, mut ws_rx) = ws.split();
+    let (out_tx, mut out_rx) = mpsc::unbounded_channel::<WsMessage>();
+
+    let writer = tokio::spawn(async move {
+        while let Some(msg) = out_rx.recv().await {
+            if ws_tx.send(msg).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    send_ws_json(&out_tx, serde_json::json!({ "type": "connected", "clientId": client_id.to_string() }));
+    let mut role: Option<String> = None;
+
+    while let Some(next) = ws_rx.next().await {
+        let Ok(msg) = next else { break };
+        if !msg.is_text() {
+            continue;
+        }
+        let text = match msg.to_str() {
+            Ok(t) => t,
+            Err(_) => {
+                send_ws_json(&out_tx, serde_json::json!({ "type": "error", "reason": "Invalid UTF-8" }));
+                continue;
+            }
+        };
+
+        let incoming: SignalMessage = match serde_json::from_str(text) {
+            Ok(v) => v,
+            Err(_) => {
+                send_ws_json(&out_tx, serde_json::json!({ "type": "error", "reason": "Invalid JSON" }));
+                continue;
+            }
+        };
+
+        match incoming.kind.as_str() {
+            "join" => {
+                let requested = incoming.role.unwrap_or_default().trim().to_string();
+                if requested != "host" && requested != "sender" {
+                    send_ws_json(&out_tx, serde_json::json!({ "type": "error", "reason": "join requires role(host|sender)" }));
+                    continue;
+                }
+
+                let mut st = match state.lock() {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                let slot = if requested == "host" { &mut st.room.host } else { &mut st.room.sender };
+                if slot.as_ref().map(|p| p.id != client_id).unwrap_or(false) {
+                    send_ws_json(&out_tx, serde_json::json!({ "type": "error", "reason": format!("{requested} already joined room") }));
+                    continue;
+                }
+                *slot = Some(PeerHandle { id: client_id, tx: out_tx.clone() });
+                role = Some(requested.clone());
+
+                send_ws_json(&out_tx, serde_json::json!({ "type": "joined", "roomId": FIXED_ROOM_ID, "role": requested }));
+                if let (Some(host), Some(sender)) = (st.room.host.as_ref(), st.room.sender.as_ref()) {
+                    send_ws_json(&host.tx, serde_json::json!({ "type": "peer-ready", "roomId": FIXED_ROOM_ID }));
+                    send_ws_json(&sender.tx, serde_json::json!({ "type": "peer-ready", "roomId": FIXED_ROOM_ID }));
+                }
+            }
+            "offer" | "answer" | "ice" => {
+                let Some(role_now) = role.as_ref() else {
+                    send_ws_json(&out_tx, serde_json::json!({ "type": "error", "reason": "join first" }));
+                    continue;
+                };
+                let peer = {
+                    let st = match state.lock() {
+                        Ok(v) => v,
+                        Err(_) => break,
+                    };
+                    if role_now == "host" {
+                        st.room.sender.as_ref().map(|p| p.tx.clone())
+                    } else {
+                        st.room.host.as_ref().map(|p| p.tx.clone())
+                    }
+                };
+                if let Some(peer_tx) = peer {
+                    send_ws_json(
+                        &peer_tx,
+                        serde_json::json!({
+                            "type": incoming.kind,
+                            "roomId": FIXED_ROOM_ID,
+                            "from": role_now,
+                            "data": incoming.data
+                        }),
+                    );
+                } else {
+                    send_ws_json(&out_tx, serde_json::json!({ "type": "error", "reason": "peer not connected" }));
+                }
+            }
+            _ => {
+                send_ws_json(&out_tx, serde_json::json!({ "type": "error", "reason": format!("Unknown type: {}", incoming.kind) }));
+            }
+        }
+    }
+
+    if let Some(role_now) = role {
+        let peer = {
+            let mut st = match state.lock() {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+            if role_now == "host" {
+                if st.room.host.as_ref().map(|p| p.id) == Some(client_id) {
+                    st.room.host = None;
+                }
+                st.room.sender.as_ref().map(|p| p.tx.clone())
+            } else {
+                if st.room.sender.as_ref().map(|p| p.id) == Some(client_id) {
+                    st.room.sender = None;
+                }
+                st.room.host.as_ref().map(|p| p.tx.clone())
+            }
+        };
+        if let Some(peer_tx) = peer {
+            send_ws_json(
+                &peer_tx,
+                serde_json::json!({
+                    "type": "peer-left",
+                    "roomId": FIXED_ROOM_ID,
+                    "role": role_now
+                }),
+            );
+        }
+    }
+
+    writer.abort();
+}
+
+fn send_ws_json(tx: &mpsc::UnboundedSender<WsMessage>, value: serde_json::Value) {
+    if let Ok(text) = serde_json::to_string(&value) {
+        let _ = tx.send(WsMessage::text(text));
+    }
+}
+
+fn load_or_create_config() -> Result<(PathBuf, AppConfig)> {
+    let path = std::env::current_dir()
+        .context("failed to read current dir")?
+        .join("config.json");
+
+    if !path.exists() {
+        let cfg = AppConfig::default();
+        let text = serde_json::to_string_pretty(&cfg).context("failed to serialize default config")?;
+        fs::write(&path, text).with_context(|| format!("failed to write {}", path.display()))?;
+        println!("[config] generated default config: {}", path.display());
+        return Ok((path, cfg));
+    }
+
+    let text = fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
+    let cfg: AppConfig = serde_json::from_str(&text)
+        .with_context(|| format!("failed to parse {}", path.display()))?;
+    println!("[config] loaded: {}", path.display());
+    Ok((path, cfg))
+}
+
+fn detect_lan_hint() -> Option<String> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    let addr = socket.local_addr().ok()?;
+    if addr.ip().is_loopback() {
+        None
+    } else {
+        Some(addr.ip().to_string())
+    }
+}
+
+fn print_startup_guide(config_path: &PathBuf, app_cfg: &AppConfig) {
+    println!("==================================================");
+    println!("Studio Link is running");
+    println!("Config file: {}", config_path.display());
+    println!("Host signaling (receiver): {}", app_cfg.signaling_url);
+    println!("Embedded services: {}", app_cfg.embedded_services);
+
+    if app_cfg.embedded_services {
+        println!("Open sender web page:");
+        println!("  https://localhost:{EMBEDDED_WEB_PORT}");
+        if let Some(ip) = detect_lan_hint() {
+            println!("  https://{ip}:{EMBEDDED_WEB_PORT}");
+        }
+        println!("Sender signaling URL:");
+        println!("  wss://<host-ip>:{EMBEDDED_WEB_PORT}/ws");
+    } else {
+        println!("Embedded services are disabled.");
+        println!("Use your external web/signaling services.");
+    }
+    println!("==================================================");
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let signaling_url = std::env::var("SIGNALING_URL").unwrap_or_else(|_| "ws://127.0.0.1:8787".to_string());
+    let (config_path, app_cfg) = load_or_create_config()?;
+    let signaling_url = app_cfg.signaling_url.clone();
     let room_id = FIXED_ROOM_ID.to_string();
-    let output_name_filter = std::env::var("VIRTUAL_MIC_OUTPUT_NAME").ok();
-    let enable_virtual_cam = std::env::var("VIRTUAL_CAM_ENABLED")
-        .map(|v| !matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off"))
-        .unwrap_or(true);
-    let virtual_cam_backend =
-        std::env::var("VIRTUAL_CAM_BACKEND").unwrap_or_else(|_| "obs".to_string());
+    let output_name_filter = app_cfg.virtual_mic_output_name.clone();
+    let enable_virtual_cam = app_cfg.virtual_cam_enabled;
+    let virtual_cam_backend = app_cfg.virtual_cam_backend.clone();
     let video_relay_config = VideoRelayConfig {
         enable_virtual_cam,
         virtual_cam_backend,
+        virtual_cam_width: app_cfg.virtual_cam_width,
+        virtual_cam_height: app_cfg.virtual_cam_height,
     };
 
     println!("[receiver] signaling={signaling_url}");
@@ -169,6 +494,10 @@ async fn main() -> Result<()> {
         "[video] virtual_cam enabled={} backend={}",
         video_relay_config.enable_virtual_cam, video_relay_config.virtual_cam_backend
     );
+    print_startup_guide(&config_path, &app_cfg);
+
+    start_embedded_services_if_enabled(app_cfg.embedded_services).await?;
+    tokio::time::sleep(Duration::from_millis(350)).await;
 
     let (audio_sink, _audio_stream) = start_audio_output(output_name_filter.as_deref())?;
 
@@ -636,13 +965,11 @@ fn run_virtual_cam_worker(
     let mut access_unit: Vec<u8> = Vec::with_capacity(1024 * 1024);
     let mut last_seq: Option<u16> = None;
     let mut waiting_for_idr = false;
-    let forced_cam_width = std::env::var("VIRTUAL_CAM_WIDTH")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
+    let forced_cam_width = video_relay_config
+        .virtual_cam_width
         .filter(|v| *v > 0 && *v % 2 == 0);
-    let forced_cam_height = std::env::var("VIRTUAL_CAM_HEIGHT")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
+    let forced_cam_height = video_relay_config
+        .virtual_cam_height
         .filter(|v| *v > 0 && *v % 2 == 0);
     let mut cached_sps: Option<Vec<u8>> = None;
     let mut cached_pps: Option<Vec<u8>> = None;
@@ -982,7 +1309,7 @@ fn select_output_device(host: &cpal::Host, filter: Option<&str>) -> Result<cpal:
                 }
             }
             return Err(anyhow!(
-                "no output device matched VIRTUAL_MIC_OUTPUT_NAME='{}'",
+                "no output device matched config.virtual_mic_output_name='{}'",
                 raw_filter
             ));
         }

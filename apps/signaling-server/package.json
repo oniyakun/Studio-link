@@ -1,5 +1,5 @@
 ﻿{
-  "name": "@web-rtc-mic/signaling-server",
+  "name": "@studio-link/signaling-server",
   "version": "0.1.0",
   "private": true,
   "type": "module",
